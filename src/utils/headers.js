@@ -2,7 +2,8 @@
  * Client Header & Evasion Utilities
  */
 
-const CHROME_VERSION_URL = 'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json';
+const CHROME_VERSION_URL =
+  'https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions.json';
 
 let latestChromeVersion = '120.0.0.0'; // Hardcoded fallback
 
@@ -56,7 +57,12 @@ export function buildHeaders(isJson = true) {
   const v = latestChromeVersion.split('.')[0];
   const headers = [
     ['User-Agent', getRandomUserAgent()],
-    ['Accept', isJson ? 'application/json' : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'],
+    [
+      'Accept',
+      isJson
+        ? 'application/json'
+        : 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    ],
     ['Accept-Language', 'en-US,en;q=0.9'],
     ['Cache-Control', 'no-cache'],
     ['Pragma', 'no-cache'],

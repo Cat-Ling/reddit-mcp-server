@@ -7,10 +7,7 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 
 import { toolHandlers } from './tools/handlers.js';
 import { logger } from './utils/logger.js';
@@ -25,7 +22,7 @@ const server = new Server(
     capabilities: {
       tools: {},
     },
-  }
+  },
 );
 
 /**
@@ -42,7 +39,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             feed: { type: 'string', enum: ['popular', 'all', 'home'], default: 'popular' },
             sort: { type: 'string', enum: ['hot', 'new', 'top', 'rising'], default: 'hot' },
-            time: { type: 'string', enum: ['hour', 'day', 'week', 'month', 'year', 'all'], default: 'day' },
+            time: {
+              type: 'string',
+              enum: ['hour', 'day', 'week', 'month', 'year', 'all'],
+              default: 'day',
+            },
             limit: { type: 'number', default: 25 },
             after: { type: 'string' },
           },
@@ -56,7 +57,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             subreddit: { type: 'string' },
             sort: { type: 'string', enum: ['hot', 'new', 'top', 'rising'], default: 'hot' },
-            time: { type: 'string', enum: ['hour', 'day', 'week', 'month', 'year', 'all'], default: 'day' },
+            time: {
+              type: 'string',
+              enum: ['hour', 'day', 'week', 'month', 'year', 'all'],
+              default: 'day',
+            },
             limit: { type: 'number', default: 25 },
             after: { type: 'string' },
           },
@@ -84,8 +89,16 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           properties: {
             query: { type: 'string' },
             subreddit: { type: 'string' },
-            sort: { type: 'string', enum: ['relevance', 'hot', 'top', 'new', 'comments'], default: 'relevance' },
-            time: { type: 'string', enum: ['hour', 'day', 'week', 'month', 'year', 'all'], default: 'all' },
+            sort: {
+              type: 'string',
+              enum: ['relevance', 'hot', 'top', 'new', 'comments'],
+              default: 'relevance',
+            },
+            time: {
+              type: 'string',
+              enum: ['hour', 'day', 'week', 'month', 'year', 'all'],
+              default: 'all',
+            },
             limit: { type: 'number', default: 25 },
             after: { type: 'string' },
           },
