@@ -1,5 +1,3 @@
-/* eslint-disable max-classes-per-file */
-
 /**
  * Custom Error Classes for Centralized Error Handling
  */

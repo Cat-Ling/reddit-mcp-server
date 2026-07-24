@@ -2,7 +2,7 @@
  * Tools Dispatcher
  */
 import { fetchRedditWithFallback } from '../lib/api.js';
-import { truncateText, formatPostMediaMarkdown } from '../utils/formatters.js';
+import { truncateText, formatPostMediaMarkdown, unescapeHtml } from '../utils/formatters.js';
 import { parseCommentTree, renderCommentsMarkdown } from '../utils/comments.js';
 import {
   FrontpageSchema,
@@ -34,7 +34,7 @@ function formatDiagnosticHeader(diagnostics) {
 
 export const toolHandlers = {
   reddit_get_frontpage: async (rawArgs) => {
-    const parseResult = FrontpageSchema.safeParse(rawArgs);
+    const parseResult = FrontpageSchema.safeParse(rawArgs || {});
     if (!parseResult.success) {
       throw new ValidationError(
         'Invalid arguments for reddit_get_frontpage',
@@ -49,13 +49,12 @@ export const toolHandlers = {
 
     const { data, diagnostics } = await fetchRedditWithFallback(path, query);
     const children = data.data?.children || [];
-    const nextToken = data.data?.after || null;
 
     let markdown = formatDiagnosticHeader(diagnostics);
     markdown += `# Reddit Frontpage: r/${feed} (${sort})\n\n`;
     children.forEach((post, i) => {
       const p = post.data;
-      markdown += `### ${i + 1}. [${p.title}](${p.url})\n`;
+      markdown += `### ${i + 1}. [${unescapeHtml(p.title)}](${p.url})\n`;
       markdown += `*   **r/${p.subreddit}** | u/${p.author} | Score: ${p.score}\n`;
       const media = formatPostMediaMarkdown(p);
       if (media.markdown) markdown += media.markdown;
@@ -65,12 +64,11 @@ export const toolHandlers = {
 
     return {
       content: [{ type: 'text', text: markdown }],
-      structuredContent: { posts: children.map((c) => c.data), nextToken },
     };
   },
 
   reddit_get_subreddit_posts: async (rawArgs) => {
-    const parseResult = SubredditPostsSchema.safeParse(rawArgs);
+    const parseResult = SubredditPostsSchema.safeParse(rawArgs || {});
     if (!parseResult.success) {
       throw new ValidationError(
         'Invalid arguments for reddit_get_subreddit_posts',
@@ -86,13 +84,12 @@ export const toolHandlers = {
 
     const { data, diagnostics } = await fetchRedditWithFallback(path, query);
     const children = data.data?.children || [];
-    const nextToken = data.data?.after || null;
 
     let markdown = formatDiagnosticHeader(diagnostics);
     markdown += `# Subreddit: r/${subreddit} (${sort})\n\n`;
     children.forEach((post, i) => {
       const p = post.data;
-      markdown += `### ${i + 1}. [${p.title}](${p.url})\n`;
+      markdown += `### ${i + 1}. [${unescapeHtml(p.title)}](${p.url})\n`;
       markdown += `*   u/${p.author} | Score: ${p.score} | Comments: ${p.num_comments}\n`;
       const media = formatPostMediaMarkdown(p);
       if (media.markdown) markdown += media.markdown;
@@ -102,12 +99,11 @@ export const toolHandlers = {
 
     return {
       content: [{ type: 'text', text: markdown }],
-      structuredContent: { posts: children.map((c) => c.data), nextToken },
     };
   },
 
   reddit_get_post_details: async (rawArgs) => {
-    const parseResult = PostDetailsSchema.safeParse(rawArgs);
+    const parseResult = PostDetailsSchema.safeParse(rawArgs || {});
     if (!parseResult.success) {
       throw new ValidationError(
         'Invalid arguments for reddit_get_post_details',
@@ -135,23 +131,28 @@ export const toolHandlers = {
 
     const parsedComments = parseCommentTree(commentsData, 0, depth);
     let markdown = formatDiagnosticHeader(diagnostics);
-    markdown += `# ${postData.title}\n`;
+    markdown += `# ${unescapeHtml(postData.title)}\n`;
     markdown += `*   r/${postData.subreddit} | u/${postData.author} | Score: ${postData.score}\n\n`;
 
     const media = formatPostMediaMarkdown(postData);
     if (media.markdown) markdown += `## Media\n${media.markdown}\n`;
-    if (postData.selftext) markdown += `## Content\n${truncateText(postData.selftext, 4000)}\n\n`;
+    if (postData.selftext) {
+      markdown += `## Content\n${
+        args.truncate_content
+          ? truncateText(postData.selftext, 4000)
+          : unescapeHtml(postData.selftext)
+      }\n\n`;
+    }
 
     markdown += `## Comments\n\n${renderCommentsMarkdown(parsedComments) || '*No comments found.*'}`;
 
     return {
       content: [{ type: 'text', text: markdown }],
-      structuredContent: { post: postData, comments: parsedComments },
     };
   },
 
   reddit_search: async (rawArgs) => {
-    const parseResult = SearchSchema.safeParse(rawArgs);
+    const parseResult = SearchSchema.safeParse(rawArgs || {});
     if (!parseResult.success) {
       throw new ValidationError('Invalid arguments for reddit_search', parseResult.error.format());
     }
@@ -167,6 +168,7 @@ export const toolHandlers = {
       limit,
       after,
       restrict_sr: subreddit ? 'on' : 'off',
+      include_over_18: 'on',
     };
 
     const { data, diagnostics } = await fetchRedditWithFallback(path, queryParams);
@@ -174,20 +176,54 @@ export const toolHandlers = {
 
     let markdown = formatDiagnosticHeader(diagnostics);
     markdown += `# Search: "${query}"${subreddit ? ` in r/${subreddit}` : ''}\n\n`;
+
+    // If global search, try to find matching subreddits too
+    if (!subreddit) {
+      try {
+        const { data: subData } = await fetchRedditWithFallback('/subreddits/search', {
+          q: query,
+          limit: 3,
+          include_over_18: 'on',
+        });
+        const subredditsFound = subData.data?.children || [];
+        if (subredditsFound.length > 0) {
+          markdown += `## Matching Subreddits\n`;
+          subredditsFound.forEach((s) => {
+            const p = s.data;
+            if (!p.display_name) return;
+            markdown += `*   **[r/${p.display_name}](https://reddit.com/r/${p.display_name})** - ${p.subscribers?.toLocaleString() || 0} subs\n`;
+            if (p.public_description)
+              markdown += `    > ${p.public_description.replace(/\n/g, ' ')}\n`;
+          });
+          markdown += `\n---\n\n`;
+        }
+      } catch (err) {
+        logger.debug({ err: err.message }, 'Failed to fetch matching subreddits during search');
+      }
+    }
+
+    markdown += `## Post Results\n\n`;
     children.forEach((post, i) => {
       const p = post.data;
-      markdown += `### ${i + 1}. [${p.title}](${p.url})\n`;
-      markdown += `*   r/${p.subreddit} | u/${p.author} | Score: ${p.score}\n---\n\n`;
+      if (!p.title) return; // Skip non-post results
+      markdown += `### ${i + 1}. [${unescapeHtml(p.title)}](https://reddit.com${p.permalink})\n`;
+      markdown += `*   r/${p.subreddit} | u/${p.author} | Score: ${p.score}\n`;
+      if (p.url && !p.url.includes(p.permalink)) {
+        markdown += `*   🔗 **External Link**: ${p.url}\n`;
+      }
+      const media = formatPostMediaMarkdown(p);
+      if (media.markdown) markdown += media.markdown;
+      if (p.selftext) markdown += `\n> ${truncateText(p.selftext, 300).replace(/\n/g, '\n> ')}\n`;
+      markdown += `---\n\n`;
     });
 
     return {
       content: [{ type: 'text', text: markdown }],
-      structuredContent: { posts: children.map((c) => c.data) },
     };
   },
 
   reddit_get_subreddit_about: async (rawArgs) => {
-    const parseResult = SubredditAboutSchema.safeParse(rawArgs);
+    const parseResult = SubredditAboutSchema.safeParse(rawArgs || {});
     if (!parseResult.success) {
       throw new ValidationError(
         'Invalid arguments for reddit_get_subreddit_about',
@@ -207,8 +243,21 @@ export const toolHandlers = {
 
     let markdown = formatDiagnosticHeader(aboutDiag);
     markdown += `# About r/${d.display_name}\n\n`;
-    markdown += `*   **Title**: ${d.title}\n*   **Subscribers**: ${d.subscribers?.toLocaleString()}\n\n`;
-    markdown += `## Description\n${d.description || '*No description.*'}\n\n`;
+
+    let icon = d.community_icon || d.icon_img;
+    if (icon) {
+      icon = icon.split('?')[0].replace(/&amp;/g, '&'); // Clean up Reddit CDN URLs
+      if (icon) markdown += `![Icon](${icon})\n\n`;
+    }
+
+    markdown += `*   **Title**: ${d.title}\n`;
+    markdown += `*   **Subscribers**: ${d.subscribers?.toLocaleString() || 0}\n`;
+    markdown += `*   **Active Users**: ${d.accounts_active?.toLocaleString() || 0}\n\n`;
+
+    if (d.public_description && d.public_description !== d.description) {
+      markdown += `## Public Description\n${d.public_description}\n\n`;
+    }
+    markdown += `## Sidebar Description\n${d.description || '*No description.*'}\n\n`;
 
     if (rules.length > 0) {
       markdown += `## Rules\n\n`;
@@ -219,12 +268,11 @@ export const toolHandlers = {
 
     return {
       content: [{ type: 'text', text: markdown }],
-      structuredContent: { about: d, rules },
     };
   },
 
   reddit_get_user_profile: async (rawArgs) => {
-    const parseResult = UserProfileSchema.safeParse(rawArgs);
+    const parseResult = UserProfileSchema.safeParse(rawArgs || {});
     if (!parseResult.success) {
       throw new ValidationError(
         'Invalid arguments for reddit_get_user_profile',
@@ -233,11 +281,13 @@ export const toolHandlers = {
     }
     const args = parseResult.data;
 
-    const { username, limit } = args;
+    const { username, sort, time, limit } = args;
     const { data: aboutData, diagnostics: aboutDiag } = await fetchRedditWithFallback(
       `/user/${username}/about`,
     );
     const { data: submittedData } = await fetchRedditWithFallback(`/user/${username}/submitted`, {
+      sort,
+      t: time,
       limit,
     });
     const d = aboutData.data;
@@ -252,10 +302,6 @@ export const toolHandlers = {
 
     return {
       content: [{ type: 'text', text: markdown }],
-      structuredContent: {
-        profile: d,
-        submissions: submittedData.data?.children?.map((c) => c.data),
-      },
     };
   },
 };

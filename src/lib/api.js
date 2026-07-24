@@ -1,6 +1,7 @@
 /**
  * Tiered Fallback Engine: Official API -> JSON -> HTML Scrape
  */
+import crypto from 'crypto';
 import { buildHeaders } from '../utils/headers.js';
 import { scrapeRedditHtml } from './scraper.js';
 import { cache } from '../utils/cache.js';
@@ -11,6 +12,9 @@ const OFFICIAL_TOKEN_URL = 'https://www.reddit.com/api/v1/access_token';
 const OFFICIAL_BASE_URL = 'https://oauth.reddit.com';
 const DEFAULT_BASE_URL = 'https://www.reddit.com';
 const FALLBACK_BASE_URL = 'https://old.reddit.com';
+const SPOOF_CLIENT_ID = 'ohXpoqrZYub1kg';
+const SPOOF_TOKEN_URL = 'https://www.reddit.com/auth/v2/oauth/access-token/loid';
+const SPOOF_USER_AGENT = 'Reddit/Version 2026.29.0/Build 2629001/Android 14';
 
 /**
  * Sensible TTLs (in seconds) for different types of content
@@ -35,6 +39,73 @@ function getTtlForPath(path) {
 let cachedToken = null;
 let tokenExpiry = 0;
 
+let spoofToken = null;
+let spoofExpiry = 0;
+let deviceId = null;
+
+/**
+ * Cookie Persistence Jar
+ */
+const cookieJar = new Map();
+
+function getCookiesString() {
+  return Array.from(cookieJar.entries())
+    .map(([k, v]) => `${k}=${v}`)
+    .join('; ');
+}
+
+function updateCookies(res) {
+  if (typeof res.headers.getSetCookie === 'function') {
+    const setCookies = res.headers.getSetCookie();
+    setCookies.forEach((cookieStr) => {
+      const [keyVal] = cookieStr.split(';');
+      const [key, ...valParts] = keyVal.split('=');
+      if (key && valParts.length > 0) {
+        cookieJar.set(key.trim(), valParts.join('=').trim());
+      }
+    });
+  }
+}
+
+/**
+ * Retrieves an OAuth token anonymously by spoofing an Android client.
+ */
+async function getMobileSpoofToken() {
+  if (spoofToken && Date.now() < spoofExpiry) return spoofToken;
+
+  if (!deviceId) {
+    deviceId = crypto.randomUUID().toLowerCase();
+  }
+
+  try {
+    const auth = Buffer.from(`${SPOOF_CLIENT_ID}:`).toString('base64');
+
+    const res = await fetch(SPOOF_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Basic ${auth}`,
+        'Content-Type': 'application/json; charset=UTF-8',
+        'User-Agent': SPOOF_USER_AGENT,
+        'client-vendor-id': deviceId,
+        'X-Reddit-Device-Id': deviceId,
+      },
+      body: JSON.stringify({ scopes: ['*', 'email', 'pii'] }),
+    });
+
+    if (!res.ok) {
+      throw new AppError(`Spoof Auth failed: ${res.status}`, res.status);
+    }
+    const data = await res.json();
+
+    spoofToken = data.access_token;
+    spoofExpiry = Date.now() + (data.expires_in - 60) * 1000;
+    return spoofToken;
+  } catch (err) {
+    logger.warn({ err: err.message }, '[Spoof API] Token acquisition failed');
+    return null;
+  }
+}
+
 /**
  * Retrieves an OAuth token for the official Reddit API using Client Credentials.
  */
@@ -52,7 +123,7 @@ async function getOfficialToken() {
       headers: {
         Authorization: `Basic ${auth}`,
         'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': 'reddit-mcp-server/1.2.0',
+        'User-Agent': SPOOF_USER_AGENT,
       },
       body: 'grant_type=client_credentials',
     });
@@ -109,11 +180,33 @@ export async function fetchRedditWithFallback(path, queryParams = {}) {
     }
   }
 
+  // 2. Try Spoofed Mobile API
+  const spoofedToken = await getMobileSpoofToken();
+  if (spoofedToken) {
+    try {
+      const data = await executeJsonRequest(
+        path,
+        queryParams,
+        OFFICIAL_BASE_URL,
+        spoofedToken,
+        SPOOF_USER_AGENT,
+      );
+      const result = { data, diagnostics: { ...diagnostics, mode: 'Spoofed Mobile API' } };
+      cache.set(cacheKey, result, ttl);
+      return result;
+    } catch (err) {
+      diagnostics.attempts.push({ tier: 'Spoofed Mobile API', error: err.message });
+      logger.warn(
+        { path, err: err.message },
+        '[Fallback] Spoofed Mobile API failure. Trying standard JSON...',
+      );
+    }
+  }
+
   // 2. Try Standard JSON Tier
   const domains = [DEFAULT_BASE_URL, FALLBACK_BASE_URL];
   for (const domain of domains) {
     try {
-      // eslint-disable-next-line no-await-in-loop
       const data = await executeJsonRequest(path, queryParams, domain);
       const tierName = domain.includes('old')
         ? 'Internal Fallback (old.reddit)'
@@ -128,10 +221,7 @@ export async function fetchRedditWithFallback(path, queryParams = {}) {
           { path, domain, err: err.message },
           'Terminal error encountered during JSON fetch',
         );
-        return {
-          error: err.message,
-          diagnostics: { ...diagnostics, status: 'Failed', mode: 'None' },
-        };
+        throw err;
       }
       logger.warn({ path, domain, err: err.message }, '[Fallback] JSON failure.');
     }
@@ -151,7 +241,13 @@ export async function fetchRedditWithFallback(path, queryParams = {}) {
   }
 }
 
-async function executeJsonRequest(path, queryParams, baseUrl, token = null) {
+async function executeJsonRequest(
+  path,
+  queryParams,
+  baseUrl,
+  token = null,
+  customUserAgent = null,
+) {
   let cleanPath = path;
   if (!baseUrl.includes('oauth')) {
     cleanPath = path.endsWith('.json') ? path : `${path}.json`;
@@ -162,14 +258,43 @@ async function executeJsonRequest(path, queryParams, baseUrl, token = null) {
   const url = `${baseUrl}${cleanPath}?${params.toString()}`;
 
   const headers = token
-    ? { Authorization: `Bearer ${token}`, 'User-Agent': 'reddit-mcp-server/1.2.0' }
+    ? { Authorization: `Bearer ${token}`, 'User-Agent': customUserAgent || SPOOF_USER_AGENT }
     : buildHeaders(true);
 
-  const res = await fetch(url, { headers });
+  const cookieStr = getCookiesString();
+  if (cookieStr) {
+    headers.Cookie = headers.Cookie ? `${headers.Cookie}; ${cookieStr}` : cookieStr;
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+
+  let res;
+  try {
+    res = await fetch(url, { headers, signal: controller.signal });
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      throw new AppError(`Request timed out after 10s on ${baseUrl}`, 408);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  updateCookies(res);
 
   if (res.status === 429) throw new RateLimitError(`Rate limited (429) on ${baseUrl}`);
   if (res.status === 403) throw new ForbiddenError(`Forbidden (403) on ${baseUrl}`);
   if (!res.ok) throw new AppError(`HTTP ${res.status} on ${baseUrl}`, res.status);
+
+  const contentType = res.headers.get('content-type') || '';
+  if (contentType.includes('text/html')) {
+    const text = await res.text();
+    if (text.includes('<title>Blocked</title>') || text.includes('whoa there, pardner')) {
+      throw new ForbiddenError(`Blocked by network policy on ${baseUrl}`);
+    }
+    throw new AppError(`Expected JSON, got HTML on ${baseUrl}`, 500);
+  }
 
   const data = await res.json();
   if (data.error) throw new AppError(`Reddit API Error: ${data.reason || data.message}`, 400);
@@ -178,8 +303,5 @@ async function executeJsonRequest(path, queryParams, baseUrl, token = null) {
 }
 
 function isTerminalError(err) {
-  return (
-    err instanceof ForbiddenError ||
-    (err.message && (err.message.includes('private') || err.message.includes('banned')))
-  );
+  return err.message && (err.message.includes('private') || err.message.includes('banned'));
 }

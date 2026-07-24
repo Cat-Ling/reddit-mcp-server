@@ -19,7 +19,7 @@ async function refreshChromeVersion() {
     if (version) {
       latestChromeVersion = version;
     }
-  } catch (err) {
+  } catch {
     // Fail silently, use fallback
   }
 }

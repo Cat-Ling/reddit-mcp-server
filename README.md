@@ -16,7 +16,7 @@ Model Context Protocol (MCP) server for Reddit data access. Supports OAuth2, pub
 | :--- | :--- |
 | `reddit_get_frontpage` | Browse popular, all, or home feeds with sorting and pagination. |
 | `reddit_get_subreddit_posts` | Retrieve posts from specific subreddits (e.g., `r/rust`). |
-| `reddit_get_post_details` | Fetch details, media, and nested comment trees. |
+| `reddit_get_post_details` | Fetch details, media, and nested comment trees. (Supports full untruncated text bypass). |
 | `reddit_search` | Global or subreddit-restricted keyword search. |
 | `reddit_get_subreddit_about` | Fetch subreddit rules, stats, and metadata. |
 | `reddit_get_user_profile` | View public user karma and recent activity. |
@@ -46,12 +46,31 @@ npm install
 npm start
 ```
 
-## Setup (Claude Desktop)
+## Setup (Claude Desktop or Cline)
 
+You can install this directly via `npx` (recommended) or locally. Add the following to your `claude_desktop_config.json`:
+
+### Option 1: Using NPX (Recommended - Zero Install)
 ```json
 {
   "mcpServers": {
-    "reddit-mcp-server": {
+    "reddit": {
+      "command": "npx",
+      "args": ["-y", "github:Cat-Ling/reddit-mcp-server"],
+      "env": {
+        "REDDIT_CLIENT_ID": "your_id",
+        "REDDIT_CLIENT_SECRET": "your_secret"
+      }
+    }
+  }
+}
+```
+
+### Option 2: Running Locally
+```json
+{
+  "mcpServers": {
+    "reddit": {
       "command": "node",
       "args": ["/absolute/path/to/reddit-mcp-server/src/index.js"],
       "env": {

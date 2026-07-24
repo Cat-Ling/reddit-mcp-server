@@ -36,7 +36,7 @@ class RedditCache {
   /**
    * Generates a deterministic cache key from path and params.
    */
-  // eslint-disable-next-line class-methods-use-this
+
   generateKey(path, queryParams = {}, mode = 'default') {
     const sortedParams = Object.keys(queryParams)
       .sort()

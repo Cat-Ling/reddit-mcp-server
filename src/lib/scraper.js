@@ -1,5 +1,3 @@
-/* eslint-disable radix */
-
 /**
  * HTML Scraping Logic for old.reddit.com
  */
@@ -11,15 +9,25 @@ export async function scrapeRedditHtml(path, queryParams = {}) {
   let cleanPath = path.endsWith('.json') ? path.slice(0, -5) : path;
   if (!cleanPath.startsWith('/')) cleanPath = `/${cleanPath}`;
 
-  const url = `${baseUrl}${cleanPath}?${new URLSearchParams(queryParams)}`;
+  let fetchPath = cleanPath;
+  if (fetchPath.endsWith('/about') && !fetchPath.includes('/user/')) {
+    fetchPath = fetchPath.slice(0, -6);
+  }
+
+  const url = `${baseUrl}${fetchPath}?${new URLSearchParams(queryParams)}`;
   const res = await fetch(url, { headers: buildHeaders(false) });
 
   if (!res.ok) throw new Error(`Scrape failed: HTTP ${res.status}`);
 
-  const $ = cheerio.load(await res.text());
+  const html = await res.text();
+  if (html.includes('<title>Blocked</title>') || html.includes('whoa there, pardner')) {
+    throw new Error('Scrape blocked by Reddit network policy (Age gate or Bot block)');
+  }
+  const $ = cheerio.load(html);
 
   if (cleanPath.includes('/comments/')) return parsePostAndComments($, cleanPath);
-  if (cleanPath.includes('/user/')) return parseUserProfile($, cleanPath);
+  if (cleanPath.includes('/user/') && cleanPath.endsWith('/about'))
+    return parseUserProfile($, cleanPath);
   if (cleanPath.endsWith('/about')) return parseSubredditAbout($);
   if (cleanPath.endsWith('/rules')) return parseSubredditRules($);
 
@@ -119,13 +127,16 @@ function parseRecursiveComments($, container) {
 
 function parseSubredditAbout($) {
   const title = $('.side .redditname a').text();
+  const iconImg = $('#header-img').attr('src') || '';
   return {
     kind: 't5',
     data: {
       display_name: title,
       title,
       subscribers: parseInt($('.side .subscribers .number').text().replace(/,/g, ''), 10) || 0,
+      accounts_active: parseInt($('.side .users-online .number').text().replace(/,/g, ''), 10) || 0,
       description: $('.side .usertext-body').text().trim(),
+      icon_img: iconImg.startsWith('//') ? `https:${iconImg}` : iconImg,
       created_utc: Date.now() / 1000,
     },
   };

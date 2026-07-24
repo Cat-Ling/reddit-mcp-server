@@ -12,6 +12,15 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { toolHandlers } from './tools/handlers.js';
 import { logger } from './utils/logger.js';
 import { AppError } from './utils/errors.js';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import {
+  FrontpageSchema,
+  SubredditPostsSchema,
+  PostDetailsSchema,
+  SearchSchema,
+  SubredditAboutSchema,
+  UserProfileSchema,
+} from './tools/schemas.js';
 
 const server = new Server(
   {
@@ -34,99 +43,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'reddit_get_frontpage',
         description: 'Browse standard Reddit frontpages (popular, all, home).',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            feed: { type: 'string', enum: ['popular', 'all', 'home'], default: 'popular' },
-            sort: { type: 'string', enum: ['hot', 'new', 'top', 'rising'], default: 'hot' },
-            time: {
-              type: 'string',
-              enum: ['hour', 'day', 'week', 'month', 'year', 'all'],
-              default: 'day',
-            },
-            limit: { type: 'number', default: 25 },
-            after: { type: 'string' },
-          },
-        },
+        inputSchema: zodToJsonSchema(FrontpageSchema),
       },
       {
         name: 'reddit_get_subreddit_posts',
         description: 'Retrieve posts from a specific subreddit.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            subreddit: { type: 'string' },
-            sort: { type: 'string', enum: ['hot', 'new', 'top', 'rising'], default: 'hot' },
-            time: {
-              type: 'string',
-              enum: ['hour', 'day', 'week', 'month', 'year', 'all'],
-              default: 'day',
-            },
-            limit: { type: 'number', default: 25 },
-            after: { type: 'string' },
-          },
-          required: ['subreddit'],
-        },
+        inputSchema: zodToJsonSchema(SubredditPostsSchema),
       },
       {
         name: 'reddit_get_post_details',
         description: 'Retrieve details and comments for a specific post.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            permalink: { type: 'string' },
-            depth: { type: 'number', default: 3 },
-            limit: { type: 'number', default: 50 },
-          },
-          required: ['permalink'],
-        },
+        inputSchema: zodToJsonSchema(PostDetailsSchema),
       },
       {
         name: 'reddit_search',
-        description: 'Search for posts across Reddit.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            query: { type: 'string' },
-            subreddit: { type: 'string' },
-            sort: {
-              type: 'string',
-              enum: ['relevance', 'hot', 'top', 'new', 'comments'],
-              default: 'relevance',
-            },
-            time: {
-              type: 'string',
-              enum: ['hour', 'day', 'week', 'month', 'year', 'all'],
-              default: 'all',
-            },
-            limit: { type: 'number', default: 25 },
-            after: { type: 'string' },
-          },
-          required: ['query'],
-        },
+        description:
+          'Search for posts across Reddit or discover matching communities. Natively supports search operators like flair_name:"News".',
+        inputSchema: zodToJsonSchema(SearchSchema),
       },
       {
         name: 'reddit_get_subreddit_about',
-        description: 'Fetch stats and description for a subreddit.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            subreddit: { type: 'string' },
-          },
-          required: ['subreddit'],
-        },
+        description:
+          'Fetch deep subreddit info including rules, active users, community icons, and full sidebar widgets/markdown.',
+        inputSchema: zodToJsonSchema(SubredditAboutSchema),
       },
       {
         name: 'reddit_get_user_profile',
         description: 'Fetch user profile and recent activity.',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            username: { type: 'string' },
-            limit: { type: 'number', default: 20 },
-          },
-          required: ['username'],
-        },
+        inputSchema: zodToJsonSchema(UserProfileSchema),
       },
     ],
   };

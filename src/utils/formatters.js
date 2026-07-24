@@ -7,10 +7,28 @@ export function formatTimestamp(epochSecs) {
   return new Date(epochSecs * 1000).toLocaleString();
 }
 
+/**
+ * Unescapes weird HTML entities that Reddit leaves inside JSON strings.
+ */
+export function unescapeHtml(text) {
+  if (!text) return '';
+  const entities = {
+    '&amp;': '&',
+    '&lt;': '<',
+    '&gt;': '>',
+    '&quot;': '"',
+    '&#39;': "'",
+    '&#x200B;': '', // Zero-width space commonly used by Reddit
+    '&nbsp;': ' ',
+  };
+  return text.replace(/&amp;|&lt;|&gt;|&quot;|&#39;|&#x200B;|&nbsp;/g, (match) => entities[match]);
+}
+
 export function truncateText(text, maxLength = 1000) {
   if (!text) return '';
-  if (text.length <= maxLength) return text;
-  return `${text.substring(0, maxLength)}\n\n*(content truncated for length)*`;
+  const cleanText = unescapeHtml(text);
+  if (cleanText.length <= maxLength) return cleanText;
+  return `${cleanText.substring(0, maxLength)}\n\n*(content truncated for length)*`;
 }
 
 /**
@@ -36,13 +54,26 @@ export function formatPostMediaMarkdown(p) {
       Object.values(p.media_metadata).forEach((item, index) => {
         let imageUrl = item.s?.u || item.s?.gif;
         if (imageUrl) {
-          imageUrl = imageUrl.replace(/&amp;/g, '&');
+          imageUrl = unescapeHtml(imageUrl);
+
+          // Convert compressed/resized previews to raw, uncompressed source images
+          try {
+            const parsedUrl = new URL(imageUrl);
+            if (parsedUrl.hostname === 'preview.redd.it') {
+              parsedUrl.hostname = 'i.redd.it';
+              parsedUrl.search = ''; // Strip all GET params (?width=...&s=...)
+              imageUrl = parsedUrl.toString();
+            }
+          } catch {
+            // Ignore if URL parsing fails
+          }
+
           mediaUrls.push({ type: 'gallery_image', url: imageUrl });
           md += `    - Image ${index + 1}: [Direct Link](${imageUrl})\n`;
         }
       });
       md += `\n`;
-    } catch (e) {
+    } catch {
       md += `    *(Failed to parse gallery metadata)*\n\n`;
     }
   }
@@ -55,9 +86,16 @@ export function formatPostMediaMarkdown(p) {
     if (isDirectImage) {
       mediaUrls.push({ type: 'direct_image', url: mainUrl });
       md += `*   🖼️ **Image URL**: [Direct Link](${mainUrl})\n\n`;
-    } else if (mainUrl.includes('redgifs.com')) {
-      mediaUrls.push({ type: 'redgifs', url: mainUrl });
-      md += `*   🔞 **Redgifs**: [Link](${mainUrl})\n\n`;
+    } else {
+      try {
+        const hostname = new URL(mainUrl).hostname;
+        if (hostname === 'redgifs.com' || hostname.endsWith('.redgifs.com')) {
+          mediaUrls.push({ type: 'redgifs', url: mainUrl });
+          md += `*   🔞 **Redgifs**: [Link](${mainUrl})\n\n`;
+        }
+      } catch {
+        // invalid URL
+      }
     }
   }
 

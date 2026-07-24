@@ -1,7 +1,7 @@
 /**
  * Recursive Comment Parser
  */
-import { formatTimestamp } from './formatters.js';
+import { formatTimestamp, unescapeHtml } from './formatters.js';
 
 export function parseCommentTree(commentsData, depth = 0, maxDepth = 3) {
   if (depth > maxDepth || !commentsData?.children) return [];
@@ -15,7 +15,7 @@ export function parseCommentTree(commentsData, depth = 0, maxDepth = 3) {
       const comment = {
         id: data.id,
         author: data.author || '[deleted]',
-        body: data.body || '[deleted]',
+        body: unescapeHtml(data.body || '[deleted]'),
         score: data.score || 0,
         created: formatTimestamp(data.created_utc),
         permalink: data.permalink,
