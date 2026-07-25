@@ -173,6 +173,13 @@ export async function fetchRedditWithFallback(path, queryParams = {}) {
       return result;
     } catch (err) {
       diagnostics.attempts.push({ tier: 'Official API', error: err.message });
+      if (isTerminalError(err)) {
+        logger.error(
+          { path, err: err.message },
+          'Terminal error encountered during Official API fetch',
+        );
+        throw err;
+      }
       logger.warn(
         { path, err: err.message },
         '[Fallback] Official API failure. Trying internal...',
@@ -196,6 +203,13 @@ export async function fetchRedditWithFallback(path, queryParams = {}) {
       return result;
     } catch (err) {
       diagnostics.attempts.push({ tier: 'Spoofed Mobile API', error: err.message });
+      if (isTerminalError(err)) {
+        logger.error(
+          { path, err: err.message },
+          'Terminal error encountered during Spoofed API fetch',
+        );
+        throw err;
+      }
       logger.warn(
         { path, err: err.message },
         '[Fallback] Spoofed Mobile API failure. Trying standard JSON...',
@@ -283,25 +297,95 @@ async function executeJsonRequest(
 
   updateCookies(res);
 
-  if (res.status === 429) throw new RateLimitError(`Rate limited (429) on ${baseUrl}`);
-  if (res.status === 403) throw new ForbiddenError(`Forbidden (403) on ${baseUrl}`);
-  if (!res.ok) throw new AppError(`HTTP ${res.status} on ${baseUrl}`, res.status);
-
   const contentType = res.headers.get('content-type') || '';
   if (contentType.includes('text/html')) {
     const text = await res.text();
-    if (text.includes('<title>Blocked</title>') || text.includes('whoa there, pardner')) {
+    if (
+      text.includes('<title>Blocked</title>') ||
+      text.includes('whoa there, pardner') ||
+      text.includes('blocked by mistake')
+    ) {
       throw new ForbiddenError(`Blocked by network policy on ${baseUrl}`);
     }
-    throw new AppError(`Expected JSON, got HTML on ${baseUrl}`, 500);
+    if (text.includes('is a private community') || text.includes('private community')) {
+      throw new ForbiddenError(`Terminal error: Subreddit is private on ${baseUrl}`);
+    }
+    if (text.includes('has been banned') || text.includes('banned from Reddit')) {
+      throw new ForbiddenError(`Terminal error: Subreddit is banned on ${baseUrl}`);
+    }
+    if (text.includes('quarantined') || text.includes('This community is quarantined')) {
+      throw new ForbiddenError(`Terminal error: Subreddit is quarantined on ${baseUrl}`);
+    }
+    if (text.includes('gated')) {
+      throw new ForbiddenError(`Terminal error: Subreddit is gated on ${baseUrl}`);
+    }
+    if (
+      path.includes('/user/') &&
+      (text.includes('nobody on Reddit goes by that name') ||
+        text.includes('has been suspended') ||
+        text.includes('page not found'))
+    ) {
+      throw new AppError(`Terminal error: user not found on ${baseUrl}`, 404);
+    }
+    throw new AppError(
+      `Expected JSON, got HTML on ${baseUrl} (Status: ${res.status})`,
+      res.status === 200 ? 500 : res.status,
+    );
   }
 
-  const data = await res.json();
-  if (data.error) throw new AppError(`Reddit API Error: ${data.reason || data.message}`, 400);
+  let data;
+  try {
+    data = await res.json();
+  } catch (err) {
+    if (res.status === 429) throw new RateLimitError(`Rate limited (429) on ${baseUrl}`);
+    if (res.status === 403) throw new ForbiddenError(`Forbidden (403) on ${baseUrl}`);
+    if (!res.ok) throw new AppError(`HTTP ${res.status} on ${baseUrl}`, res.status);
+    throw err;
+  }
+
+  if (res.status === 429) throw new RateLimitError(`Rate limited (429) on ${baseUrl}`);
+
+  if (res.status === 403) {
+    if (
+      data &&
+      (data.reason === 'private' ||
+        data.reason === 'banned' ||
+        data.reason === 'quarantined' ||
+        data.reason === 'gated')
+    ) {
+      throw new ForbiddenError(`Terminal error: ${data.reason} on ${baseUrl}`);
+    }
+    if (data && data.message === 'Forbidden' && data.error === 403) {
+      throw new ForbiddenError(`Terminal error: private/forbidden on ${baseUrl}`);
+    }
+    throw new ForbiddenError(`Forbidden (403) on ${baseUrl}`);
+  }
+
+  if (res.status === 404) {
+    if (data && data.reason === 'banned') {
+      throw new ForbiddenError(`Terminal error: banned on ${baseUrl}`);
+    }
+    if (path.includes('/user/')) {
+      throw new AppError(`Terminal error: user not found on ${baseUrl}`, 404);
+    }
+  }
+
+  if (!res.ok) throw new AppError(`HTTP ${res.status} on ${baseUrl}`, res.status);
+
+  if (data && data.error)
+    throw new AppError(`Reddit API Error: ${data.reason || data.message || data.error}`, 400);
 
   return data;
 }
 
 function isTerminalError(err) {
-  return err.message && (err.message.includes('private') || err.message.includes('banned'));
+  const msg = err.message ? err.message.toLowerCase() : '';
+  return (
+    msg.includes('private') ||
+    msg.includes('banned') ||
+    msg.includes('404') ||
+    msg.includes('quarantined') ||
+    msg.includes('gated') ||
+    msg.includes('user not found')
+  );
 }

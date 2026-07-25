@@ -16,13 +16,38 @@ export async function scrapeRedditHtml(path, queryParams = {}) {
 
   const url = `${baseUrl}${fetchPath}?${new URLSearchParams(queryParams)}`;
   const res = await fetch(url, { headers: buildHeaders(false) });
+  const html = await res.text();
+
+  if (
+    html.includes('<title>Blocked</title>') ||
+    html.includes('whoa there, pardner') ||
+    html.includes('blocked by mistake')
+  ) {
+    throw new Error('Scrape blocked by Reddit network policy (Age gate or Bot block)');
+  }
+  if (html.includes('is a private community') || html.includes('private community')) {
+    throw new Error('Terminal error: Subreddit is private');
+  }
+  if (html.includes('has been banned') || html.includes('banned from Reddit')) {
+    throw new Error('Terminal error: Subreddit is banned');
+  }
+  if (html.includes('quarantined') || html.includes('This community is quarantined')) {
+    throw new Error('Terminal error: Subreddit is quarantined');
+  }
+  if (html.includes('gated')) {
+    throw new Error('Terminal error: Subreddit is gated');
+  }
+  if (
+    path.includes('/user/') &&
+    (html.includes('nobody on Reddit goes by that name') ||
+      html.includes('has been suspended') ||
+      html.includes('page not found'))
+  ) {
+    throw new Error('Terminal error: user not found (404)');
+  }
 
   if (!res.ok) throw new Error(`Scrape failed: HTTP ${res.status}`);
 
-  const html = await res.text();
-  if (html.includes('<title>Blocked</title>') || html.includes('whoa there, pardner')) {
-    throw new Error('Scrape blocked by Reddit network policy (Age gate or Bot block)');
-  }
   const $ = cheerio.load(html);
 
   if (cleanPath.includes('/comments/')) return parsePostAndComments($, cleanPath);

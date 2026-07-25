@@ -29,6 +29,13 @@ refreshChromeVersion();
 // Refresh every 24 hours
 setInterval(refreshChromeVersion, 24 * 60 * 60 * 1000).unref();
 
+function getIOSUserAgent() {
+  const iosVersion = Math.floor(Math.random() * 5) + 9;
+  const safariVersion = Math.floor(Math.random() * 5) + 600;
+  const webkitVersion = Math.floor(Math.random() * 700) + 500;
+  return `Mozilla/5.0 (CPU iPhone OS ${iosVersion}_${Math.floor(Math.random() * 10)} like Mac OS X) AppleWebKit/${webkitVersion}.60 (KHTML, like Gecko) Version/${safariVersion}.0 Mobile/15E148 Safari/${webkitVersion}.60`;
+}
+
 export function getRandomUserAgent() {
   const v = latestChromeVersion;
   const agents = [
@@ -36,6 +43,8 @@ export function getRandomUserAgent() {
     `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`,
     `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`,
     `Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Mobile Safari/537.36`,
+    getIOSUserAgent(),
+    getIOSUserAgent(), // Add it twice to increase its probability
   ];
   return agents[Math.floor(Math.random() * agents.length)];
 }
